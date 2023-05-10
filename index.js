@@ -1,7 +1,9 @@
 async function main() {
-  const app = process.argv[1];
-  const sc_url = process.argv[2];
-  const movie = process.argv[3];
+  let argc = 0;
+  const app = process.argv[++argc];
+  const sc_url = process.argv[++argc];
+  const movie = process.argv[++argc];
+  const debug_mode = process.argv[++argc] == "-debug";
 
   if (!sc_url || !movie) {
     usage();
@@ -42,8 +44,10 @@ async function main() {
    * @returns {string}
    */
   async function debug_get(url, headers) {
-    const response = await handled_get(url, headers);
-    debug(`GET request to "${url}" executed using headers: ${headers}`);
+    let response = await handled_get(url, headers);
+    if (debug_mode) {
+      debug(`GET request to "${url}" executed using headers: ${headers}`);
+    }
     return response;
   }
 
