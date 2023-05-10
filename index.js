@@ -16,6 +16,18 @@ async function main() {
   }
 
   const movies = await search_movie(movie);
+  // only an assumption
+  const chosen_movie = movies[0];
+  await download_movie(chosen_movie);
+
+  /**
+   *
+   * @param {Movie} movie
+   */
+  async function download_movie(movie) {
+    debug(movie);
+    //await debug_get(`https://scws.work/videos/${movie.scsw_id}`);
+  }
 
   function error(message) {
     console.log("Error: ");
@@ -76,7 +88,7 @@ async function main() {
 
   /**
    * @param {string} name
-   * @return {object[]}
+   * @return {Movie[]}
    */
   async function search_movie(name) {
     const search_page = await debug_get(`${sc_url}/search?q=${name}`);
@@ -94,10 +106,7 @@ async function main() {
       const slug = record.slug;
       const id = record.id;
       const images = record.images.map((image_infos) => {
-        return {
-          type: image_infos.type,
-          url: image_infos.sc_url,
-        };
+        return new MImage(image_infos.type, image_infos.sc_url);
       });
 
       const movie_page = await debug_get(`${sc_url}/titles/${id}-${slug}`);
@@ -108,10 +117,8 @@ async function main() {
         "s"
       );
       const movie_infos = decoded_movie_page.match(match_infos);
-      let seasons;
       if (movie_infos) {
-        seasons = JSON.parse(decode_utf8(movie_infos[1]));
-        const title_json = JSON.parse(decode_utf8(movie_infos[2]));
+        const seasons = JSON.parse(decode_utf8(movie_infos[1]));
 
         for (const key in seasons) {
           const season = seasons[key];
@@ -123,17 +130,16 @@ async function main() {
             const episode_name = episode.name;
             const episode_number = episode.number;
             const episode_plot = episode.plot;
-            episodes.push({
-              episode_id,
-              episode_name,
-              episode_number,
-              episode_plot,
-            });
+            episodes.push(
+              new Episode(
+                episode_id,
+                episode_number,
+                episode_name,
+                episode_plot
+              )
+            );
           }
-          movie_seasons.push({
-            season_number,
-            episodes,
-          });
+          movie_seasons.push(new Season(season_number, episodes));
         }
       }
 
@@ -147,16 +153,20 @@ async function main() {
       );
       const friendly_name = video_player_infos.title.name;
       const plot = video_player_infos.title.plot;
+      const scws_id = video_player_infos.scws_id;
 
-      movies_found.push({
-        seasons,
-        is_series: seasons?.length > 0,
-        slug,
-        id,
-        images,
-        plot,
-        friendly_name,
-      });
+      movies_found.push(
+        new Movie(
+          movie_seasons,
+          movie_seasons.length > 0,
+          slug,
+          id,
+          images,
+          plot,
+          friendly_name,
+          scws_id
+        )
+      );
     }
 
     return movies_found;
@@ -193,6 +203,7 @@ async function main() {
   function decode_html(html_encoded) {
     const table = {
       "&quot;": '"',
+      "&#039;": "'",
     };
 
     const decoded = decode_with_table(html_encoded, table);
@@ -223,6 +234,115 @@ async function main() {
     }
     return s_with_replace;
   }
+}
+
+class Movie {
+  constructor(
+    seasons,
+    is_series,
+    slug,
+    id,
+    images,
+    plot,
+    friendly_name,
+    scws_id
+  ) {
+    this.seasons = seasons;
+    this.is_series = is_series;
+    this.slug = slug;
+    this.id = id;
+    this.images = images;
+    this.plot = plot;
+    this.friendly_name = friendly_name;
+    this.scws_id = scws_id;
+  }
+  /**
+   * @type {Season[]}
+   */
+  seasons = [];
+  /**
+   * @type {boolean}
+   */
+  is_series;
+  /**
+   * @type {string}
+   */
+  slug;
+  /**
+   * @type {string}
+   */
+  id;
+  /**
+   * @type {MImage[]}
+   */
+  images = [];
+  /**
+   * @type {string}
+   */
+  plot;
+  /**
+   * @type {string}
+   */
+  friendly_name;
+  /**
+   * @type {string}
+   */
+  scws_id;
+}
+
+class Season {
+  constructor(number, episodes) {
+    this.number = number;
+    this.episodes = episodes;
+  }
+  /**
+   * @type {number}
+   */
+  number;
+  /**
+   * @type {Episode[]}
+   */
+  episodes = [];
+}
+
+class Episode {
+  constructor(id, number, name, plot) {
+    this.id = id;
+    this.number = number;
+    this.name = name;
+    this.plot = plot;
+  }
+  /**
+   * @type {number}
+   */
+  id;
+  /**
+   * @type {number}
+   */
+  number;
+  /**
+   * @type {string}
+   */
+  name;
+  /**
+   * @type {string}
+   */
+  plot;
+}
+
+class MImage {
+  constructor(type, url) {
+    this.type = type;
+    this.url = url;
+  }
+  /**
+   * @type {string}
+   */
+  type;
+  /**
+   * @type {string}
+   */
+  url;
 }
 
 main();
