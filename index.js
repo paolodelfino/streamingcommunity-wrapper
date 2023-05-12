@@ -1,9 +1,11 @@
+import crypto from "crypto";
+
 async function main() {
   let argc = 0;
   const app = process.argv[++argc];
   const sc_url = process.argv[++argc];
   const movie = process.argv[++argc];
-  const debug_mode = process.argv[++argc] == "-debug";
+  const debug_mode = process.argv[++argc] == "--debug-mode";
 
   if (!sc_url || !movie) {
     usage();
@@ -18,15 +20,105 @@ async function main() {
   const movies = await search_movie(movie);
   // only an assumption
   const chosen_movie = movies[0];
-  await download_movie(chosen_movie);
+  const ts_files_url = await get_ts_files_url(chosen_movie);
+  debug(ts_files_url);
 
   /**
    *
    * @param {Movie} movie
+   * @param {Number | undefined} seasonIndex
+   * @param {Number | undefined} episodeIndex
    */
-  async function download_movie(movie) {
-    debug(movie);
-    //await debug_get(`https://scws.work/videos/${movie.scsw_id}`);
+  async function get_ts_files_url(movie, seasonIndex, episodeIndex) {
+    let movie_db_info_url = `https://scws.work/videos/${movie.scws_id}`;
+    if (movie.is_series) {
+      if (isNaN(seasonIndex) || isNaN(episodeIndex)) {
+        error("Missing season or episode to download");
+      }
+      url += `?e=${movie.seasons[seasonIndex].episodes[episodeIndex].id}`;
+    }
+
+    const movie_db_infos_raw = await debug_get(movie_db_info_url);
+    const movie_db_info = JSON.parse(movie_db_infos_raw);
+    const folder_id = movie_db_info.folder_id;
+    const quality = `${movie_db_info.quality}p`;
+    const storage_number = movie_db_info.storage.number;
+    let proxy_index = movie_db_info.proxy_index;
+    const cdn = movie_db_info.cdn;
+    const cdn_type_number = `${cdn.type}${cdn.number}`;
+    const proxies = cdn.proxies;
+    const max_number = proxies[proxies.length - 1].number;
+
+    const token = await generate_token();
+    const ts_files_doc_raw = await debug_get(
+      `https://scws.work/master/${movie.scws_id}?type=video&rendition=${quality}&${token}`
+    );
+    const ts_files_doc = ts_files_doc_raw.split("\n");
+    const match_ts_file = regex("^[0-9]{4}-[0-9]{4}[.]ts");
+    const ts_files_name = ts_files_doc.filter((line) =>
+      line.match(match_ts_file)
+    );
+
+    const key = await get_key();
+    const iv = await get_iv(ts_files_doc_raw);
+
+    const ts_files_url = [];
+    for (const file_key in ts_files_name) {
+      const ts_file_name = ts_files_name[file_key];
+      ++proxy_index;
+      if (proxy_index > max_number) {
+        proxy_index = 1;
+      }
+
+      const proxy_index_template = `${proxy_index}`.padStart(2, "0");
+      const ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/video/${quality}/${ts_file_name}`;
+      ts_files_url.push(ts_file_url);
+    }
+
+    return ts_files_url;
+  }
+
+  /**
+   * @returns {int[]}
+   */
+  async function get_key() {
+    const enc_file = await debug_get("https://scws.work/storage/enc.key");
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(enc_file);
+    return bytes;
+  }
+
+  /**
+   * @param {string} ts_file_doc_raw
+   * @returns {string}
+   */
+  async function get_iv(ts_file_doc_raw) {
+    const match_iv = regex("IV=0x(.+)");
+    const iv_raw = ts_file_doc_raw.match(match_iv)[1];
+    const bytes = new Uint8Array(16);
+    for (let i = 0; i < iv_raw.length; i += 2) {
+      bytes[i / 2] = parseInt(iv_raw.substring(i, i + 2), 16);
+    }
+    return bytes;
+  }
+
+  async function generate_token() {
+    const l = 48;
+    const o = await debug_get("https://api64.ipify.org/");
+    const i = "Yc8U6r8KjAKAepEA";
+    let c = new Date(Date.now() + 36e5 * l).getTime();
+    const s = (c = String(Math.round(c / 1e3))) + o + " " + i;
+
+    const hash = crypto.createHash("md5").update(s).digest("hex");
+    const base64 = Buffer.from(hash, "hex").toString("base64");
+
+    const base64Url = base64
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const token = `token=${base64Url}&expires=${c}`;
+    return token;
   }
 
   function error(message) {
