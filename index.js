@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import fs from "fs";
 
 async function main() {
   let argc = 0;
@@ -20,8 +21,7 @@ async function main() {
   const movies = await search_movie(movie);
   // only an assumption
   const chosen_movie = movies[0];
-  const ts_files_url = await get_ts_files_url(chosen_movie);
-  debug(ts_files_url);
+  const playlist = await get_playlist(chosen_movie);
 
   /**
    *
@@ -29,7 +29,7 @@ async function main() {
    * @param {Number | undefined} seasonIndex
    * @param {Number | undefined} episodeIndex
    */
-  async function get_ts_files_url(movie, seasonIndex, episodeIndex) {
+  async function get_playlist(movie, seasonIndex, episodeIndex) {
     let movie_db_info_url = `https://scws.work/videos/${movie.scws_id}`;
     if (movie.is_series) {
       if (isNaN(seasonIndex) || isNaN(episodeIndex)) {
@@ -50,51 +50,66 @@ async function main() {
     const max_number = proxies[proxies.length - 1].number;
 
     const token = await generate_token();
-    const ts_files_doc_raw = await debug_get(
+    const playlist = await debug_get(
       `https://scws.work/master/${movie.scws_id}?type=video&rendition=${quality}&${token}`
     );
-    const ts_files_doc = ts_files_doc_raw.split("\n");
+    let playlist_lines = playlist.split("\n");
     const match_ts_file = regex("^[0-9]{4}-[0-9]{4}[.]ts");
-    const ts_files_name = ts_files_doc.filter((line) =>
-      line.match(match_ts_file)
-    );
-
-    const key = await get_key();
-    const iv = await get_iv(ts_files_doc_raw);
-
-    const ts_files_url = [];
-    for (const file_key in ts_files_name) {
-      const ts_file_name = ts_files_name[file_key];
-      ++proxy_index;
-      if (proxy_index > max_number) {
-        proxy_index = 1;
+    const match_credentials_line = regex('#EXT-X-KEY.+URI="(.+)",IV.+');
+    for (const line_key in playlist_lines) {
+      if (match_ts_file.test(playlist_lines[line_key])) {
+        ++proxy_index;
+        if (proxy_index > max_number) {
+          proxy_index = 1;
+        }
+        const proxy_index_template = `${proxy_index}`.padStart(2, "0");
+        const ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/video/${quality}/${playlist_lines[line_key]}`;
+        playlist_lines[line_key] = ts_file_url;
       }
 
-      const proxy_index_template = `${proxy_index}`.padStart(2, "0");
-      const ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/video/${quality}/${ts_file_name}`;
-      ts_files_url.push(ts_file_url);
+      const credentials_line = playlist_lines[line_key].match(
+        match_credentials_line
+      );
+      if (credentials_line) {
+        const match_key_uri = regex('URI=".+"');
+        const key = await retrieve_key_url();
+        playlist_lines[line_key] = playlist_lines[line_key].replace(
+          match_key_uri,
+          `URI="${key}"`
+        );
+      }
     }
 
-    return ts_files_url;
+    /* const playlist_buffer = new Uint8Array(
+      Buffer.from(playlist_lines.join("\n"))
+    );
+    fs.writeFile("playlist.m3u8", playlist_buffer, (err) => {
+      if (err) throw err;
+      console.log("The file has been saved!");
+    }); */
+
+    return playlist_lines.join("\n");
   }
 
   /**
-   * @returns {int[]}
-   */
-  async function get_key() {
-    const enc_file = await debug_get("https://scws.work/storage/enc.key");
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(enc_file);
-    return bytes;
-  }
-
-  /**
-   * @param {string} ts_file_doc_raw
    * @returns {string}
    */
-  async function get_iv(ts_file_doc_raw) {
+  async function retrieve_key_url() {
+    /* const enc_file = await debug_get("https://scws.work/storage/enc.key");
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(enc_file);
+    return bytes; */
+
+    return "https://scws.work/storage/enc.key";
+  }
+
+  /**
+   * @param {string} playlist
+   * @returns {string}
+   */
+  async function get_iv(playlist) {
     const match_iv = regex("IV=0x(.+)");
-    const iv_raw = ts_file_doc_raw.match(match_iv)[1];
+    const iv_raw = playlist.match(match_iv)[1];
     const bytes = new Uint8Array(16);
     for (let i = 0; i < iv_raw.length; i += 2) {
       bytes[i / 2] = parseInt(iv_raw.substring(i, i + 2), 16);
