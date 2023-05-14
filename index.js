@@ -13,7 +13,7 @@ async function main() {
     error("parameter is missing");
   }
 
-  if (!sc_url.startsWith("https://")) {
+  if (!sc_url.startsWith("https://streamingcommunity.")) {
     examples();
     error("invalid url");
   }
@@ -22,6 +22,21 @@ async function main() {
   // only an assumption
   const chosen_movie = movies[0];
   const playlist = await get_playlist(chosen_movie);
+  await download_movie(playlist);
+
+  /**
+   *
+   * @param {string} playlist
+   */
+  async function download_movie(playlist) {
+    /* const playlist_buffer = new Uint8Array(
+      Buffer.from(playlist_lines.join("\n"))
+    );
+    fs.writeFile("playlist.m3u8", playlist_buffer, (err) => {
+      if (err) throw err;
+      console.log("The file has been saved!");
+    }); */
+  }
 
   /**
    *
@@ -80,14 +95,6 @@ async function main() {
       }
     }
 
-    /* const playlist_buffer = new Uint8Array(
-      Buffer.from(playlist_lines.join("\n"))
-    );
-    fs.writeFile("playlist.m3u8", playlist_buffer, (err) => {
-      if (err) throw err;
-      console.log("The file has been saved!");
-    }); */
-
     return playlist_lines.join("\n");
   }
 
@@ -95,12 +102,18 @@ async function main() {
    * @returns {string}
    */
   async function retrieve_key_url() {
-    /* const enc_file = await debug_get("https://scws.work/storage/enc.key");
+    return "https://scws.work/storage/enc.key";
+  }
+
+  /**
+   *
+   * @returns {int[]}
+   */
+  async function get_key() {
+    const enc_file = await debug_get("https://scws.work/storage/enc.key");
     const encoder = new TextEncoder();
     const bytes = encoder.encode(enc_file);
-    return bytes; */
-
-    return "https://scws.work/storage/enc.key";
+    return bytes;
   }
 
   /**
