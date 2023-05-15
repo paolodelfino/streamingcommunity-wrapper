@@ -2,11 +2,12 @@ import crypto from "crypto";
 import fs from "fs";
 
 async function main() {
-  let argc = 0;
-  const app = process.argv[++argc];
-  const sc_url = process.argv[++argc];
-  const movie = process.argv[++argc];
-  const debug_mode = process.argv[++argc] == "--debug-mode";
+  const options = args_parser(process.argv);
+  const app = options["app"];
+  const sc_url = options["url"];
+  const movie = options["movie"];
+  const output_file = options["output"];
+  const debug_mode = options["debug-mode"] == "true";
 
   if (!sc_url || !movie) {
     usage();
@@ -21,9 +22,35 @@ async function main() {
   const movies = await search_movie(movie);
   const chosen_movie = movies[0];
   const playlist = await get_playlist(chosen_movie, 0, 9);
-  fs.writeFileSync("sample-playlist.m3u8", playlist);
+  if (output_file) {
+    fs.writeFileSync(output_file, playlist);
+  }
   /* const blob_url = await download_movie(playlist);
   debug(blob_url); */
+
+  /**
+   *
+   * @param {string[]} args
+   * @returns {{[key: string]: string}}
+   */
+  function args_parser(args) {
+    const node = args[0];
+    const app = args[1];
+    const parsed = {};
+    for (const arg of args
+      .splice(2, args.length - 2)
+      .join("\n")
+      .split("--")) {
+      const key_value = arg
+        .trim()
+        .split("\n")
+        .filter((item) => item);
+      if (key_value.length == 2) {
+        parsed[key_value[0]] = key_value[1];
+      }
+    }
+    return parsed;
+  }
 
   /**
    *
@@ -217,7 +244,9 @@ async function main() {
 
   function usage() {
     console.log("USAGE:");
-    console.log(` node ${app} <streamingcommunity url> <movie name>`);
+    console.log(
+      ` node ${app} <streamingcommunity_url> <movie_name> <output_file>`
+    );
     examples();
   }
 
