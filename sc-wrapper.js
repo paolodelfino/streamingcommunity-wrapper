@@ -30,6 +30,7 @@ async function main() {
 
   const movies = await search_movie(movie);
   const chosen_movie = movies[0];
+  debug(chosen_movie.trailer_url);
   const playlist = await get_playlist(chosen_movie, 0, 9);
   if (output_file) {
     fs.writeFileSync(output_file, playlist);
@@ -37,6 +38,7 @@ async function main() {
   /* const blob_url = await download_movie(playlist);
   debug(blob_url); */
 
+  // TODO: update examples, refractor usage to display options using list_options
   function list_options(options_table) {}
 
   /**
@@ -318,6 +320,14 @@ async function main() {
         '<season-select.+seasons="(.+)".+title_id="[0-9]+".+title-json="(.+)">.+season-select>',
         "s"
       );
+      const match_trailer_videos = regex(
+        '<slider-trailer.+videos="(.+)".+</slider-trailer>',
+        "s"
+      );
+      const trailer_videos = JSON.parse(
+        decode_html(decoded_movie_page.match(match_trailer_videos)[1])
+      );
+      const trailer_url = `https://youtube.com/watch?v=${trailer_videos[0].url}`;
       const movie_infos = decoded_movie_page.match(match_infos);
       if (movie_infos) {
         const seasons = JSON.parse(decode_utf8(movie_infos[1]));
@@ -365,7 +375,8 @@ async function main() {
           images,
           plot,
           friendly_name,
-          scws_id
+          scws_id,
+          trailer_url
         )
       );
     }
@@ -466,25 +477,6 @@ async function main() {
 }
 
 class Movie {
-  constructor(
-    seasons,
-    is_series,
-    slug,
-    id,
-    images,
-    plot,
-    friendly_name,
-    scws_id
-  ) {
-    this.seasons = seasons;
-    this.is_series = is_series;
-    this.slug = slug;
-    this.id = id;
-    this.images = images;
-    this.plot = plot;
-    this.friendly_name = friendly_name;
-    this.scws_id = scws_id;
-  }
   /**
    * @type {Season[]}
    */
@@ -517,13 +509,35 @@ class Movie {
    * @type {string}
    */
   scws_id;
+  /**
+   * @type {string}
+   */
+  trailer_url;
+
+  constructor(
+    seasons,
+    is_series,
+    slug,
+    id,
+    images,
+    plot,
+    friendly_name,
+    scws_id,
+    trailer_url
+  ) {
+    this.seasons = seasons;
+    this.is_series = is_series;
+    this.slug = slug;
+    this.id = id;
+    this.images = images;
+    this.plot = plot;
+    this.friendly_name = friendly_name;
+    this.scws_id = scws_id;
+    this.trailer_url = trailer_url;
+  }
 }
 
 class Season {
-  constructor(number, episodes) {
-    this.number = number;
-    this.episodes = episodes;
-  }
   /**
    * @type {number}
    */
@@ -532,15 +546,14 @@ class Season {
    * @type {Episode[]}
    */
   episodes = [];
+
+  constructor(number, episodes) {
+    this.number = number;
+    this.episodes = episodes;
+  }
 }
 
 class Episode {
-  constructor(id, number, name, plot) {
-    this.id = id;
-    this.number = number;
-    this.name = name;
-    this.plot = plot;
-  }
   /**
    * @type {number}
    */
@@ -557,13 +570,16 @@ class Episode {
    * @type {string}
    */
   plot;
+
+  constructor(id, number, name, plot) {
+    this.id = id;
+    this.number = number;
+    this.name = name;
+    this.plot = plot;
+  }
 }
 
 class MImage {
-  constructor(type, url) {
-    this.type = type;
-    this.url = url;
-  }
   /**
    * @type {string}
    */
@@ -572,6 +588,11 @@ class MImage {
    * @type {string}
    */
   url;
+
+  constructor(type, url) {
+    this.type = type;
+    this.url = url;
+  }
 }
 
 class Options_Table {
