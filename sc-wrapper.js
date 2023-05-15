@@ -2,14 +2,15 @@ import crypto from "crypto";
 import fs from "fs";
 
 async function main() {
-  let options_table = new Options_Table("-", {
-    url: new Option("u", true),
-    movie: new Option("m", true),
-    season: new Option("s", true, true),
-    episode: new Option("e", true, true),
-    output: new Option("o", true),
-    "debug-mode": new Option("debug", false, true),
-    help: new Option("h", false, true),
+  let options_table = new Options_Table("--", {
+    url: new Option("u", true, false, undefined),
+    movie: new Option("m", true, false, undefined),
+    season: new Option("s", true, true, undefined),
+    episode: new Option("e", true, true, undefined),
+    output: new Option("o", true, false, undefined),
+    "debug-mode": new Option("debug", false, true, undefined),
+    help: new Option("h", false, true, undefined),
+    "movie-index": new Option("index", true, true, undefined),
   });
   options_table = fill_table_by_args(process.argv, options_table);
 
@@ -29,17 +30,43 @@ async function main() {
   }
 
   const movies = await search_movie(movie);
-  const chosen_movie = movies[0];
-  debug(chosen_movie.trailer_url);
-  const playlist = await get_playlist(chosen_movie, 0, 9);
+  if (movies.length == 0) {
+    console.log("0 movies found");
+    process.exit(0);
+  }
+  const chosen_movie_index_option = options_table.options["movie-index"];
+  if (!chosen_movie_index_option.found && movies.length > 1) {
+    for (const [index, movie] of Object.entries(movies)) {
+      console.log(`${index}. ${movie.friendly_name}`);
+    }
+    console.log(
+      `now take the index of the movie you prefer and restart the program adding: ${options_table.option_prefix}movie-index <chosen-index>`
+    );
+    process.exit(0);
+  }
+  let chosen_movie = movies[0];
+  if (chosen_movie_index_option.found) {
+    chosen_movie = movies[chosen_movie_index_option.value];
+  }
+  const playlist = await get_playlist(
+    chosen_movie,
+    options_table.options["season"].value - 1,
+    options_table.options["episode"].value - 1
+  );
   if (output_file) {
     fs.writeFileSync(output_file, playlist);
+    console.log(`playlist saved successfully to ${output_file}`);
   }
   /* const blob_url = await download_movie(playlist);
   debug(blob_url); */
 
   // TODO: update examples, refractor usage to display options using list_options
-  function list_options(options_table) {}
+  /**
+   *
+   * @param {Options_Table} options_table
+   * @param {string[]} options_to_show_name
+   */
+  function list_options(options_table, options_to_show_name) {}
 
   /**
    *
@@ -75,6 +102,7 @@ async function main() {
     }
     for (const [option_name, option_infos] of Object.entries(table.options)) {
       if (!option_infos.is_optional && !option_infos.found) {
+        console.log(table);
         error(`required ${option_name} option not found`);
       }
     }
@@ -235,6 +263,7 @@ async function main() {
   function error(message) {
     console.log("Error: ");
     console.trace(message);
+    console.log(`try ${options_table.option_prefix}help to discover more`);
     process.exit(1);
   }
 
