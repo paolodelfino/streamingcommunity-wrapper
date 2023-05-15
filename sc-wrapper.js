@@ -2,17 +2,26 @@ import crypto from "crypto";
 import fs from "fs";
 
 async function main() {
-  const options = args_parser(process.argv);
-  const app = options["app"];
-  const sc_url = options["url"];
-  const movie = options["movie"];
-  const output_file = options["output"];
-  const debug_mode = options["debug-mode"] == "true";
+  let options_table = new Options_Table("-", {
+    url: new Option("u", true),
+    movie: new Option("m", true),
+    season: new Option("s", true, true),
+    episode: new Option("e", true, true),
+    output: new Option("o", true),
+    "debug-mode": new Option("debug", false, true),
+    help: new Option("h", false, true),
+  });
+  options_table = fill_table_by_args(process.argv, options_table);
 
-  if (!sc_url || !movie) {
+  const app = options_table.options["app"].value;
+  if (options_table.options["help"].found) {
     usage();
-    error("parameter is missing");
+    process.exit(0);
   }
+  const sc_url = options_table.options["url"].value;
+  const movie = options_table.options["movie"].value;
+  const output_file = options_table.options["output"].value;
+  const is_debug_mode = options_table.options["debug-mode"].found;
 
   if (!sc_url.startsWith("https://streamingcommunity.")) {
     examples();
@@ -28,28 +37,48 @@ async function main() {
   /* const blob_url = await download_movie(playlist);
   debug(blob_url); */
 
+  function list_options(options_table) {}
+
   /**
    *
    * @param {string[]} args
-   * @returns {{[key: string]: string}}
+   * @param {Options_Table} table
+   * @returns {Options_Table}
    */
-  function args_parser(args) {
+  function fill_table_by_args(args, table) {
     const node = args[0];
     const app = args[1];
-    const parsed = {};
-    for (const arg of args
-      .splice(2, args.length - 2)
-      .join("\n")
-      .split("--")) {
-      const key_value = arg
-        .trim()
-        .split("\n")
-        .filter((item) => item);
-      if (key_value.length == 2) {
-        parsed[key_value[0]] = key_value[1];
+    const options = {};
+    const args_reduced = args.splice(2);
+    for (let arg_index = 0; arg_index < args_reduced.length; arg_index++) {
+      const arg = args_reduced[arg_index];
+      for (const [option_name, option_infos] of Object.entries(table.options)) {
+        const match_option = `${table.option_prefix}${option_name}`;
+        const match_option_alias = option_infos.alias
+          ? `${table.option_prefix}${option_infos.alias}`
+          : undefined;
+        if (arg == match_option || arg == match_option_alias) {
+          if (!option_infos.has_value) {
+            table.options[option_name].found = true;
+            break;
+          }
+          const option_value = args_reduced[arg_index + 1];
+          if (!option_value) {
+            error(`could not find value for option: ${option_name}`);
+          }
+          table.options[option_name].found = true;
+          table.options[option_name].value = option_value;
+        }
       }
     }
-    return parsed;
+    for (const [option_name, option_infos] of Object.entries(table.options)) {
+      if (!option_infos.is_optional && !option_infos.found) {
+        error(`required ${option_name} option not found`);
+      }
+    }
+    table.options["app"] = new Option(undefined, true, false, app);
+    table.options["app"].found = true;
+    return table;
   }
 
   /**
@@ -229,14 +258,14 @@ async function main() {
    */
   async function debug_get(url, headers) {
     let response = await handled_get(url, headers);
-    if (debug_mode) {
+    if (is_debug_mode) {
       debug(`GET request to "${url}" executed using headers: ${headers}`);
     }
     return response;
   }
 
   function debug(message) {
-    if (debug_mode) {
+    if (is_debug_mode) {
       console.log("[DEBUG]");
       console.trace(message);
     }
@@ -543,6 +572,64 @@ class MImage {
    * @type {string}
    */
   url;
+}
+
+class Options_Table {
+  /**
+   * @type {string}
+   */
+  option_prefix;
+  /**
+   * @type {{[option_name: string]: Option}}
+   */
+  options;
+
+  /**
+   * @param {string} option_prefix
+   * @param {{[option_name: string]: Option}} options
+   */
+  constructor(option_prefix, options) {
+    this.option_prefix = option_prefix;
+    this.options = options;
+  }
+}
+
+class Option {
+  /**
+   * @type {string}
+   */
+  alias;
+  /**
+   * @type {boolean}
+   */
+  has_value;
+  /**
+   * @type {string}
+   */
+  value;
+  /**
+   * @type {boolean}
+   */
+  found;
+  /**
+   * @type {boolean}
+   */
+  is_optional;
+
+  /**
+   *
+   * @param {string} name
+   * @param {string} alias
+   * @param {boolean} has_value
+   * @param {boolean} is_optional
+   * @param {string} value
+   */
+  constructor(alias, has_value, is_optional, value) {
+    this.alias = alias;
+    this.has_value = has_value;
+    this.is_optional = is_optional;
+    this.value = value;
+  }
 }
 
 main();
