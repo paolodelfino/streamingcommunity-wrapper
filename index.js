@@ -19,41 +19,64 @@ async function main() {
   }
 
   const movies = await search_movie(movie);
-  // only an assumption
   const chosen_movie = movies[0];
-  const playlist = await get_playlist(chosen_movie);
-  await download_movie(playlist);
+  const playlist = await get_playlist(chosen_movie, 0, 9);
+  fs.writeFileSync("sample-playlist.m3u8", playlist);
+  /* const blob_url = await download_movie(playlist);
+  debug(blob_url); */
 
   /**
    *
    * @param {string} playlist
+   * @returns {string}
    */
   async function download_movie(playlist) {
-    /* const playlist_buffer = new Uint8Array(
-      Buffer.from(playlist_lines.join("\n"))
-    );
-    fs.writeFile("playlist.m3u8", playlist_buffer, (err) => {
-      if (err) throw err;
-      console.log("The file has been saved!");
-    }); */
+    const match_ts_file = regex("^https://.+[0-9]{4}-[0-9]{4}[.]ts");
+    const unordered_blobs = [];
+    const callbacks = [];
+    let index = -1;
+    for (const line of playlist.split("\n")) {
+      if (match_ts_file.test(line)) {
+        callbacks.push(
+          new Promise((resolve) => {
+            fetch(line)
+              .then((response) => response.blob())
+              .then((blob) => {
+                unordered_blobs.push({
+                  blob: blob,
+                  index: ++index,
+                  url: line,
+                });
+                resolve();
+              });
+          })
+        );
+      }
+    }
+    await Promise.all(callbacks);
+    debug(unordered_blobs);
   }
 
   /**
    *
    * @param {Movie} movie
-   * @param {Number | undefined} seasonIndex
-   * @param {Number | undefined} episodeIndex
+   * @param {Number | undefined} season_index
+   * @param {Number | undefined} episode_index
    */
-  async function get_playlist(movie, seasonIndex, episodeIndex) {
-    let movie_db_info_url = `https://scws.work/videos/${movie.scws_id}`;
+  async function get_playlist(movie, season_index, episode_index) {
+    let movie_db_info_url = `https://scws.work/videos/`;
+    let scws_id;
     if (movie.is_series) {
-      if (isNaN(seasonIndex) || isNaN(episodeIndex)) {
+      if (isNaN(season_index) || isNaN(episode_index)) {
         error("Missing season or episode to download");
       }
-      url += `?e=${movie.seasons[seasonIndex].episodes[episodeIndex].id}`;
+      scws_id = await retrieve_ws_id(movie, season_index, episode_index);
+      movie_db_info_url += scws_id;
+    } else {
+      movie_db_info_url += movie.scws_id;
     }
 
-    const movie_db_infos_raw = await debug_get(movie_db_info_url);
+    const movie_db_infos_raw = await debug_get(movie_db_info_url); // ERROR HERE
     const movie_db_info = JSON.parse(movie_db_infos_raw);
     const folder_id = movie_db_info.folder_id;
     const quality = `${movie_db_info.quality}p`;
@@ -66,7 +89,9 @@ async function main() {
 
     const token = await generate_token();
     const playlist = await debug_get(
-      `https://scws.work/master/${movie.scws_id}?type=video&rendition=${quality}&${token}`
+      `https://scws.work/master/${
+        scws_id ? scws_id : movie.scws_id
+      }?type=video&rendition=${quality}&${token}`
     );
     let playlist_lines = playlist.split("\n");
     const match_ts_file = regex("^[0-9]{4}-[0-9]{4}[.]ts");
@@ -151,7 +176,7 @@ async function main() {
 
   function error(message) {
     console.log("Error: ");
-    console.log(message);
+    console.trace(message);
     process.exit(1);
   }
 
@@ -163,7 +188,7 @@ async function main() {
     const response = await fetch(url, {
       headers,
     }).catch((err) => {
-      error(err);
+      error(`Trying to get ${url}: ${err}`);
       process.exit(1);
     });
     return response.text();
@@ -221,8 +246,7 @@ async function main() {
     const records = JSON.parse(decoded_records);
 
     const movies_found = [];
-    for (const key in records) {
-      const record = records[key];
+    for (const record of records) {
       const slug = record.slug;
       const id = record.id;
       const images = record.images.map((image_infos) => {
@@ -240,8 +264,7 @@ async function main() {
       if (movie_infos) {
         const seasons = JSON.parse(decode_utf8(movie_infos[1]));
 
-        for (const key in seasons) {
-          const season = seasons[key];
+        for (const season of seasons) {
           const season_number = season.number;
           const episodes = [];
           for (const key in season.episodes) {
@@ -290,6 +313,34 @@ async function main() {
     }
 
     return movies_found;
+  }
+
+  /**
+   *
+   * @param {Movie} movie
+   * @param {number} season_index
+   * @param {number} episode_index
+   * @returns {number}
+   */
+  async function retrieve_ws_id(movie, season_index, episode_index) {
+    let video_player_page_url = `${sc_url}/watch/${movie.id}`;
+    if (movie.is_series) {
+      if (isNaN(season_index) || isNaN(episode_index)) {
+        error("Missing season or episode to download");
+      }
+
+      video_player_page_url += `?e=${movie.seasons[season_index].episodes[episode_index].id}`;
+    }
+    const video_player_page = await debug_get(video_player_page_url);
+    const match_video_player = regex(
+      '<video-player.+response="(.+)".+video-player>',
+      "s"
+    );
+    const video_player_infos = JSON.parse(
+      decode_utf8(decode_html(video_player_page.match(match_video_player)[1]))
+    );
+    const scws_id = video_player_infos.scws_id;
+    return scws_id;
   }
 
   /**
