@@ -117,7 +117,6 @@ async function main() {
     }
   }
 
-  // TODO: finish download_movie function
   /**
    *
    * @param {string} playlist
@@ -161,8 +160,10 @@ async function main() {
     let scws_id;
     if (movie.is_series) {
       if (isNaN(season_index) || isNaN(episode_index)) {
-        // TODO: more precise message
-        error("Missing season or episode to download");
+        error("missing season to download");
+      }
+      if (isNaN(episode_index)) {
+        error("missing episode to download");
       }
       scws_id = await retrieve_ws_id(movie, season_index, episode_index);
       movie_db_info_url += scws_id;
@@ -283,7 +284,7 @@ async function main() {
     const response = await fetch(url, {
       headers,
     }).catch((err) => {
-      error(`Trying to get ${url}: ${err}`);
+      error(`trying to get ${url}: ${err}`);
       process.exit(1);
     });
     return response.text();
@@ -421,6 +422,8 @@ async function main() {
       const video_player_infos = JSON.parse(
         decode_utf8(decode_html(video_player_page.match(match_video_player)[1]))
       );
+      /* const tmdb_id = video_player_infos.title.tmdb_id;
+      const tmdb_type = video_player_infos.title.type; */
       const friendly_name = video_player_infos.title.name;
       const plot = video_player_infos.title.plot;
       const scws_id = video_player_infos.scws_id;
@@ -454,9 +457,11 @@ async function main() {
     let video_player_page_url = `${sc_url}/watch/${movie.id}`;
     if (movie.is_series) {
       if (isNaN(season_index) || isNaN(episode_index)) {
-        error("Missing season or episode to download");
+        error("missing season to download");
       }
-
+      if (isNaN(episode_index)) {
+        error("missing episode to download");
+      }
       video_player_page_url += `?e=${movie.seasons[season_index].episodes[episode_index].id}`;
     }
     const video_player_page = await debug_get(video_player_page_url);
