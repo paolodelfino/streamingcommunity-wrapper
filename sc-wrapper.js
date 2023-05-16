@@ -3,14 +3,19 @@ import fs from "fs";
 
 async function main() {
   let options_table = new Options_Table("--", {
-    url: new Option("u", true, false, undefined),
-    movie: new Option("m", true, false, undefined),
-    season: new Option("s", true, true, undefined),
-    episode: new Option("e", true, true, undefined),
-    output: new Option("o", true, false, undefined),
-    "debug-mode": new Option("debug", false, true, undefined),
-    help: new Option("h", false, true, undefined),
-    "movie-index": new Option("index", true, true, undefined),
+    url: new Option("u", true, false, "streaming community url"),
+    movie: new Option("m", true, false, "name of the movie to search for"),
+    season: new Option("s", true, true, "number of the season to download"),
+    episode: new Option("e", true, true, "number of the episode to download"),
+    output: new Option("o", true, false, "playlist output file"),
+    "debug-mode": new Option("debug", false, true, "activate debug mode"),
+    help: new Option("h", false, true, "print help"),
+    "movie-index": new Option(
+      "index",
+      true,
+      true,
+      "index of the movie to download if multiple results found"
+    ),
   });
   options_table = fill_table_by_args(process.argv, options_table);
 
@@ -19,6 +24,8 @@ async function main() {
     usage();
     process.exit(0);
   }
+  alarm_on_missing_options(options_table);
+
   const sc_url = options_table.options["url"].value;
   const movie = options_table.options["movie"].value;
   const output_file = options_table.options["output"].value;
@@ -60,14 +67,6 @@ async function main() {
   /* const blob_url = await download_movie(playlist);
   debug(blob_url); */
 
-  // TODO: update examples, refractor usage to display options using list_options
-  /**
-   *
-   * @param {Options_Table} options_table
-   * @param {string[]} options_to_show_name
-   */
-  function list_options(options_table, options_to_show_name) {}
-
   /**
    *
    * @param {string[]} args
@@ -75,9 +74,8 @@ async function main() {
    * @returns {Options_Table}
    */
   function fill_table_by_args(args, table) {
-    const node = args[0];
+    //const node = args[0];
     const app = args[1];
-    const options = {};
     const args_reduced = args.splice(2);
     for (let arg_index = 0; arg_index < args_reduced.length; arg_index++) {
       const arg = args_reduced[arg_index];
@@ -100,17 +98,26 @@ async function main() {
         }
       }
     }
-    for (const [option_name, option_infos] of Object.entries(table.options)) {
-      if (!option_infos.is_optional && !option_infos.found) {
-        console.log(table);
-        error(`required ${option_name} option not found`);
-      }
-    }
-    table.options["app"] = new Option(undefined, true, false, app);
+    table.options["app"] = new Option(undefined, true, false);
     table.options["app"].found = true;
+    table.options["app"].value = app;
+    table.options["app"].is_system = true;
     return table;
   }
 
+  /**
+   *
+   * @param {Options_Table} table
+   */
+  function alarm_on_missing_options(table) {
+    for (const [option_name, option_infos] of Object.entries(table.options)) {
+      if (!option_infos.is_optional && !option_infos.found) {
+        error(`required ${option_name} option not found`);
+      }
+    }
+  }
+
+  // TODO: finish download_movie function
   /**
    *
    * @param {string} playlist
@@ -154,6 +161,7 @@ async function main() {
     let scws_id;
     if (movie.is_series) {
       if (isNaN(season_index) || isNaN(episode_index)) {
+        // TODO: more precise message
         error("Missing season or episode to download");
       }
       scws_id = await retrieve_ws_id(movie, season_index, episode_index);
@@ -304,19 +312,41 @@ async function main() {
 
   function usage() {
     console.log("USAGE:");
-    console.log(
-      ` node ${app} <streamingcommunity_url> <movie_name> <output_file>`
-    );
+    console.log(` node ${app} [...options]`);
+    list_options(options_table);
     examples();
+  }
+
+  /**
+   *
+   * @param {Options_Table} options_table
+   * @param {string[]} options_to_show_name
+   */
+  function list_options(options_table, options_to_show_name) {
+    console.log("OPTIONS:");
+    /* if (options_to_show_name && options_to_show_name.length > 0){
+      
+    } */
+    for (const [option_name, option_infos] of Object.entries(
+      options_table.options
+    )) {
+      if (!option_infos.is_system) {
+        console.log(` ${options_table.option_prefix}${option_name}`);
+        console.log(`     alias: ${option_infos.alias}`);
+        console.log(`     has value: ${option_infos.has_value}`);
+        console.log(`     is optional: ${option_infos.is_optional}`);
+        console.log(`     description: ${option_infos.description}`);
+      }
+    }
   }
 
   function examples() {
     console.log("EXAMPLES:");
     console.log(
-      ' node index.js "https://streamingcommunity.army" "Enola Holmes 2"'
+      ` node ${app} --u "https://streamingcommunity.codes" --m "rick and morty" --s "1" --e "3" --o "sample-playlist.m3u8"`
     );
     console.log(
-      ' node index.js "https://streamingcommunity.army" "Rick and Morty"'
+      ` node ${app} --u "https://streamingcommunity.codes" --m "Enola Holmes 2" --o "sample-playlist.m3u8"`
     );
   }
 
@@ -665,6 +695,14 @@ class Option {
    * @type {boolean}
    */
   is_optional;
+  /**
+   * @type {boolean}
+   */
+  is_system;
+  /**
+   * @type {string}
+   */
+  description;
 
   /**
    *
@@ -674,11 +712,11 @@ class Option {
    * @param {boolean} is_optional
    * @param {string} value
    */
-  constructor(alias, has_value, is_optional, value) {
+  constructor(alias, has_value, is_optional, description) {
     this.alias = alias;
     this.has_value = has_value;
     this.is_optional = is_optional;
-    this.value = value;
+    this.description = description;
   }
 }
 
