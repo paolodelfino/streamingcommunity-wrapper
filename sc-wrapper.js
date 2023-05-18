@@ -7,7 +7,7 @@ async function main() {
     movie: new Option("m", true, false, "name of the movie to search for"),
     season: new Option("s", true, true, "number of the season to download"),
     episode: new Option("e", true, true, "number of the episode to download"),
-    output: new Option("o", true, false, "playlist output file"),
+    output: new Option("o", true, false, "movie output file"),
     "debug-mode": new Option("debug", false, true, "activate debug mode"),
     help: new Option("h", false, true, "print help"),
     "movie-index": new Option(
@@ -55,17 +55,16 @@ async function main() {
   if (chosen_movie_index_option.found) {
     chosen_movie = movies[chosen_movie_index_option.value];
   }
+  console.log("getting the playlist...");
   const playlist = await get_playlist(
     chosen_movie,
     options_table.options["season"].value - 1,
     options_table.options["episode"].value - 1
   );
-  if (output_file) {
-    fs.writeFileSync(output_file, playlist);
-    console.log(`playlist saved successfully to ${output_file}`);
-  }
-  /* const blob_url = await download_movie(playlist);
-  debug(blob_url); */
+  console.log("downloading...");
+  const movie_buffer = await download_movie(playlist);
+  fs.writeFileSync(output_file, movie_buffer);
+  console.log(`successfully downloaded file to ${output_file}`);
 
   /**
    *
@@ -120,33 +119,88 @@ async function main() {
   /**
    *
    * @param {string} playlist
-   * @returns {string}
+   * @returns {string | Buffer}
    */
   async function download_movie(playlist) {
-    const match_ts_file = regex("^https://.+[0-9]{4}-[0-9]{4}[.]ts");
-    const unordered_blobs = [];
+    let segments = [];
+    const key = await (
+      await fetch("https://scws.work/storage/enc.key")
+    ).arrayBuffer();
+    const iv = new Uint8Array([
+      67, 166, 217, 103, 213, 193, 114, 144, 217, 131, 34, 245, 200, 246, 102,
+      11,
+    ]);
+    let subtle;
+    let is_web = false;
+    try {
+      if (window && window.crypto) {
+        is_web = true;
+      }
+    } catch (err) {}
+    if (is_web) {
+      subtle = window.crypto.subtle;
+    } else {
+      subtle = crypto.webcrypto.subtle;
+    }
+
+    const aes_key = await subtle.importKey(
+      "raw",
+      key,
+      { name: "AES-CBC" },
+      false,
+      ["encrypt", "decrypt"]
+    );
+
     const callbacks = [];
     let index = -1;
-    for (const line of playlist.split("\n")) {
-      if (match_ts_file.test(line)) {
-        callbacks.push(
-          new Promise((resolve) => {
-            fetch(line)
-              .then((response) => response.blob())
-              .then((blob) => {
-                unordered_blobs.push({
-                  blob: blob,
-                  index: ++index,
-                  url: line,
-                });
-                resolve();
-              });
-          })
-        );
-      }
+    const files_url = playlist
+      .split("\n")
+      .filter((line) => line.includes("https://") && line.includes(".ts"))
+      .map((line) => line.trim());
+
+    const parts = [];
+    const part_size = Math.ceil(files_url.length / 10);
+    for (let i = 0; i < files_url.length; i += part_size) {
+      parts.push(files_url.slice(i, i + part_size));
     }
-    await Promise.all(callbacks);
-    debug(unordered_blobs);
+
+    for (const part of parts) {
+      for (const file_url of part) {
+        const content = {
+          file_url,
+          index: ++index,
+        };
+        const callback = new Promise(async (resolve) => {
+          const file_enc = await (await fetch(content.file_url)).arrayBuffer();
+          const file_buffer = new Uint8Array(file_enc);
+
+          const file_dec_buffer = await subtle.decrypt(
+            { name: "AES-CBC", iv: iv },
+            aes_key,
+            file_buffer.buffer
+          );
+
+          segments[content.index] = file_dec_buffer;
+
+          resolve();
+        });
+        callbacks.push(callback);
+      }
+      await Promise.all(callbacks);
+      callbacks.length = 0;
+    }
+
+    const blob = new Blob(segments);
+
+    if (is_web) {
+      const url = URL.createObjectURL(blob);
+      return url;
+    }
+
+    const movie_buffer = Buffer.from(
+      new Uint8Array(await blob.arrayBuffer()).buffer
+    );
+    return movie_buffer;
   }
 
   /**
@@ -240,7 +294,7 @@ async function main() {
    * @param {string} playlist
    * @returns {string}
    */
-  async function get_iv(playlist) {
+  function get_iv(playlist) {
     const match_iv = regex("IV=0x(.+)");
     const iv_raw = playlist.match(match_iv)[1];
     const bytes = new Uint8Array(16);
@@ -344,10 +398,10 @@ async function main() {
   function examples() {
     console.log("EXAMPLES:");
     console.log(
-      ` node ${app} --u "https://streamingcommunity.codes" --m "rick and morty" --s "1" --e "3" --o "sample-playlist.m3u8"`
+      ` node ${app} --u "https://streamingcommunity.codes" --m "rick and morty" --s "1" --e "3" --o "movie.mp4"`
     );
     console.log(
-      ` node ${app} --u "https://streamingcommunity.codes" --m "Enola Holmes 2" --o "sample-playlist.m3u8"`
+      ` node ${app} --u "https://streamingcommunity.codes" --m "Enola Holmes 2" --o "movie.mp4"`
     );
   }
 
