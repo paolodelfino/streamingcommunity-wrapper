@@ -177,7 +177,8 @@ async function main() {
           index: ++index,
         };
         const callback = new Promise(async (resolve) => {
-          const file_enc = await (await fetch(content.file_url)).arrayBuffer();
+          //const file_enc = await (await fetch(content.file_url)).arrayBuffer();
+          const file_enc = await get_buffer(content.file_url);
 
           if (require_decryption) {
             const file_buffer = new Uint8Array(file_enc);
@@ -309,7 +310,8 @@ async function main() {
    * @returns {ArrayBuffer}
    */
   async function get_key() {
-    const key_buffer = await (await fetch(retrieve_key_url())).arrayBuffer();
+    //const key_buffer = await (await fetch(retrieve_key_url())).arrayBuffer();
+    const key_buffer = await get_buffer(retrieve_key_url());
     return key_buffer;
   }
 
@@ -384,6 +386,17 @@ async function main() {
     return response;
   }
 
+  /**
+   *
+   * @param {string} url
+   * @returns {ArrayBuffer}
+   */
+  async function get_buffer(url) {
+    const response = await fetch(url).catch((err) => error(err.message));
+    const buffer = await response.arrayBuffer();
+    return buffer;
+  }
+
   function debug(message) {
     if (is_debug_mode) {
       console.log("[DEBUG]");
@@ -401,9 +414,8 @@ async function main() {
   /**
    *
    * @param {Options_Table} options_table
-   * @param {string[]} options_to_show_name
    */
-  function list_options(options_table, options_to_show_name) {
+  function list_options(options_table /* , options_to_show_name */) {
     console.log("OPTIONS:");
     /* if (options_to_show_name && options_to_show_name.length > 0){
       
