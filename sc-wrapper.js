@@ -177,7 +177,6 @@ async function main() {
           index: ++index,
         };
         const callback = new Promise(async (resolve) => {
-          //const file_enc = await (await fetch(content.file_url)).arrayBuffer();
           const file_enc = await get_buffer(content.file_url);
 
           if (require_decryption) {
@@ -310,7 +309,6 @@ async function main() {
    * @returns {ArrayBuffer}
    */
   async function get_key() {
-    //const key_buffer = await (await fetch(retrieve_key_url())).arrayBuffer();
     const key_buffer = await get_buffer(retrieve_key_url());
     return key_buffer;
   }
