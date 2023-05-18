@@ -63,7 +63,14 @@ async function main() {
   );
   console.log("downloading...");
   const movie_buffer = await download_movie(playlist);
-  fs.writeFileSync(output_file, movie_buffer);
+  const fd = fs.openSync(output_file, "w");
+  let offset = 0;
+  while (offset < movie_buffer.length) {
+    const buffer = movie_buffer.slice(offset, offset + 2147483647);
+    fs.writeSync(fd, buffer);
+    offset += buffer.length;
+  }
+  fs.closeSync(fd);
   console.log(`successfully downloaded file to ${output_file}`);
 
   /**
@@ -123,13 +130,12 @@ async function main() {
    */
   async function download_movie(playlist) {
     let segments = [];
-    const key = await (
-      await fetch("https://scws.work/storage/enc.key")
-    ).arrayBuffer();
-    const iv = new Uint8Array([
-      67, 166, 217, 103, 213, 193, 114, 144, 217, 131, 34, 245, 200, 246, 102,
-      11,
-    ]);
+    const key = await get_key();
+    const iv = get_iv(playlist);
+    let require_decryption = true;
+    if (!iv) {
+      require_decryption = false;
+    }
     let subtle;
     let is_web = false;
     try {
@@ -172,15 +178,20 @@ async function main() {
         };
         const callback = new Promise(async (resolve) => {
           const file_enc = await (await fetch(content.file_url)).arrayBuffer();
-          const file_buffer = new Uint8Array(file_enc);
 
-          const file_dec_buffer = await subtle.decrypt(
-            { name: "AES-CBC", iv: iv },
-            aes_key,
-            file_buffer.buffer
-          );
+          if (require_decryption) {
+            const file_buffer = new Uint8Array(file_enc);
 
-          segments[content.index] = file_dec_buffer;
+            const file_dec_buffer = await subtle.decrypt(
+              { name: "AES-CBC", iv: iv },
+              aes_key,
+              file_buffer.buffer
+            );
+
+            segments[content.index] = file_dec_buffer;
+          } else {
+            segments[content.index] = file_enc;
+          }
 
           resolve();
         });
@@ -237,13 +248,22 @@ async function main() {
     const max_number = proxies[proxies.length - 1].number;
 
     const token = await generate_token();
-    const playlist = await debug_get(
+    let require_decryption = true;
+    let playlist = await debug_get(
       `https://scws.work/master/${
         scws_id ? scws_id : movie.scws_id
       }?type=video&rendition=${quality}&${token}`
     );
+    if (!playlist) {
+      playlist = await debug_get(
+        `https://scws.work/master/${
+          scws_id ? scws_id : movie.scws_id
+        }?type=video&rendition=${quality}.m3u8&${token}`
+      );
+      require_decryption = false;
+    }
     let playlist_lines = playlist.split("\n");
-    const match_ts_file = regex("^[0-9]{4}-[0-9]{4}[.]ts");
+    const match_ts_file = regex("[0-9].+[.]ts");
     const match_credentials_line = regex('#EXT-X-KEY.+URI="(.+)",IV.+');
     for (const line_key in playlist_lines) {
       if (match_ts_file.test(playlist_lines[line_key])) {
@@ -252,7 +272,12 @@ async function main() {
           proxy_index = 1;
         }
         const proxy_index_template = `${proxy_index}`.padStart(2, "0");
-        const ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/video/${quality}/${playlist_lines[line_key]}`;
+        let ts_file_url;
+        if (require_decryption) {
+          ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/video/${quality}/${playlist_lines[line_key]}`;
+        } else {
+          ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/${playlist_lines[line_key]}`;
+        }
         playlist_lines[line_key] = ts_file_url;
       }
 
@@ -261,7 +286,7 @@ async function main() {
       );
       if (credentials_line) {
         const match_key_uri = regex('URI=".+"');
-        const key = await retrieve_key_url();
+        const key = retrieve_key_url();
         playlist_lines[line_key] = playlist_lines[line_key].replace(
           match_key_uri,
           `URI="${key}"`
@@ -275,33 +300,34 @@ async function main() {
   /**
    * @returns {string}
    */
-  async function retrieve_key_url() {
+  function retrieve_key_url() {
     return "https://scws.work/storage/enc.key";
   }
 
   /**
    *
-   * @returns {int[]}
+   * @returns {ArrayBuffer}
    */
   async function get_key() {
-    const enc_file = await debug_get("https://scws.work/storage/enc.key");
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(enc_file);
-    return bytes;
+    const key_buffer = await (await fetch(retrieve_key_url())).arrayBuffer();
+    return key_buffer;
   }
 
   /**
    * @param {string} playlist
-   * @returns {string}
+   * @returns {Uint8Array | undefined}
    */
   function get_iv(playlist) {
+    if (!playlist.includes("IV=")) {
+      return undefined;
+    }
     const match_iv = regex("IV=0x(.+)");
     const iv_raw = playlist.match(match_iv)[1];
     const bytes = new Uint8Array(16);
     for (let i = 0; i < iv_raw.length; i += 2) {
       bytes[i / 2] = parseInt(iv_raw.substring(i, i + 2), 16);
     }
-    return bytes;
+    return new Uint8Array(bytes);
   }
 
   async function generate_token() {
