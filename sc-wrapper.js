@@ -7,6 +7,12 @@ async function main() {
     movie: new Option("m", true, false, "name of the movie to search for"),
     season: new Option("s", true, true, "number of the season to download"),
     episode: new Option("e", true, true, "number of the episode to download"),
+    "max-search-results": new Option(
+      undefined,
+      true,
+      true,
+      "max number of movies in search results"
+    ),
     output: new Option("o", true, false, "movie output file"),
     "debug-mode": new Option("debug", false, true, "activate debug mode"),
     help: new Option("h", false, true, "print help"),
@@ -36,11 +42,19 @@ async function main() {
     error("invalid url");
   }
 
-  const movies = await search_movie(movie);
+  const max_search_results_option = options_table.options["max-search-results"];
+  const max_search_results = max_search_results_option.found
+    ? max_search_results_option.value
+    : 3;
+  const movies = await search_movie(movie, max_search_results);
   if (movies.length == 0) {
     console.log("0 movies found");
+    console.log(
+      "if you cannot find your movie, try to increase the max search results number: --max-search-results {number}"
+    );
     process.exit(0);
   }
+
   const chosen_movie_index_option = options_table.options["movie-index"];
   if (!chosen_movie_index_option.found && movies.length > 1) {
     for (const [index, movie] of Object.entries(movies)) {
@@ -51,18 +65,23 @@ async function main() {
     );
     process.exit(0);
   }
+
   let chosen_movie = movies[0];
   if (chosen_movie_index_option.found) {
     chosen_movie = movies[chosen_movie_index_option.value];
   }
+
   console.log("getting the playlist...");
   const playlist = await get_playlist(
     chosen_movie,
     options_table.options["season"].value - 1,
     options_table.options["episode"].value - 1
   );
+
   console.log("downloading...");
   const movie_buffer = await download_movie(playlist);
+
+  console.log("saving file...");
   const fd = fs.openSync(output_file, "w");
   let offset = 0;
   while (offset < movie_buffer.length) {
@@ -71,6 +90,7 @@ async function main() {
     offset += buffer.length;
   }
   fs.closeSync(fd);
+
   console.log(`successfully downloaded file to ${output_file}`);
 
   /**
@@ -442,95 +462,100 @@ async function main() {
   }
 
   /**
+   *
+   * @param {object} record
+   * @param {boolean} [findRelated=true]
+   * @returns {Movie}
+   */
+  async function retrieve_movie_info(record) {
+    const slug = record.slug;
+    const id = record.id;
+    const images = record.images.map((image_info) => {
+      return new MImage(
+        image_info.type,
+        `${sc_url.replace("https://", "https://cdn.")}/images/${
+          image_info.filename
+        }`
+      );
+    });
+
+    const movie_page_raw = await debug_get(`${sc_url}/titles/${id}-${slug}`);
+    const match_data_page = regex('<div id="app" data-page="(.+)"><!--', "s");
+    const data_page = JSON.parse(
+      decode_utf8(decode_html(movie_page_raw.match(match_data_page)[1]))
+    );
+
+    const movie_info = data_page.props.title;
+    const score = movie_info.score;
+    const release_date = movie_info.release_date;
+    const friendly_name = movie_info.name;
+    const plot = movie_info.plot;
+    const scws_id = movie_info.scws_id;
+    const trailers = movie_info.trailers;
+    let trailer_url;
+    if (trailers.length > 0) {
+      trailer_url = `https://youtube.com/watch?v=${trailers[0].youtube_id}`;
+    }
+
+    const seasons = [];
+    const seasons_info = movie_info.seasons;
+    for (const season of seasons_info) {
+      const season_number = season.number;
+      const season_page_raw = await debug_get(
+        `${sc_url}/titles/${id}-${slug}/stagione-${season_number}`
+      );
+      const season_info = JSON.parse(
+        decode_utf8(decode_html(season_page_raw.match(match_data_page)[1]))
+      ).props.loadedSeason;
+      const episodes = [];
+      for (const episode of season_info.episodes) {
+        const episode_id = episode.id;
+        const episode_name = episode.name;
+        const episode_number = episode.number;
+        const episode_plot = episode.plot;
+        episodes.push(
+          new Episode(episode_id, episode_number, episode_name, episode_plot)
+        );
+      }
+      seasons.push(new Season(season_number, episodes));
+    }
+
+    return new Movie(
+      seasons,
+      seasons.length > 0,
+      slug,
+      id,
+      images,
+      plot,
+      friendly_name,
+      scws_id,
+      trailer_url,
+      score,
+      release_date
+    );
+  }
+
+  /**
    * @param {string} name
+   * @param {number} max_results
    * @return {Movie[]}
    */
-  async function search_movie(name) {
+  async function search_movie(name, max_results) {
     const search_page = await debug_get(`${sc_url}/search?q=${name}`);
-    const match_records = regex(
-      '<the-search-page.+records-json="(.+)".+route',
-      "s"
+    const match_data_page = regex('<div id="app".+data-page="(.+)"><!--', "s");
+    const data_page = JSON.parse(
+      decode_utf8(decode_html(search_page.match(match_data_page)[1]))
     );
-    const encoded_records = search_page.match(match_records)[1];
-    const decoded_records = decode_html(encoded_records);
-    const records = JSON.parse(decoded_records);
+    const records = data_page.props.titles;
 
     const movies_found = [];
+    let count = 0;
     for (const record of records) {
-      const slug = record.slug;
-      const id = record.id;
-      const images = record.images.map((image_infos) => {
-        return new MImage(image_infos.type, image_infos.sc_url);
-      });
-
-      const movie_page = await debug_get(`${sc_url}/titles/${id}-${slug}`);
-      const decoded_movie_page = decode_utf8(decode_html(movie_page));
-      const movie_seasons = [];
-      const match_infos = regex(
-        '<season-select.+seasons="(.+)".+title_id="[0-9]+".+title-json="(.+)">.+season-select>',
-        "s"
-      );
-      const match_trailer_videos = regex(
-        '<slider-trailer.+videos="(.+)".+</slider-trailer>',
-        "s"
-      );
-      const trailer_videos = JSON.parse(
-        decode_html(decoded_movie_page.match(match_trailer_videos)[1])
-      );
-      const trailer_url = `https://youtube.com/watch?v=${trailer_videos[0].url}`;
-      const movie_infos = decoded_movie_page.match(match_infos);
-      if (movie_infos) {
-        const seasons = JSON.parse(decode_utf8(movie_infos[1]));
-
-        for (const season of seasons) {
-          const season_number = season.number;
-          const episodes = [];
-          for (const key in season.episodes) {
-            const episode = season.episodes[key];
-            const episode_id = episode.id;
-            const episode_name = episode.name;
-            const episode_number = episode.number;
-            const episode_plot = episode.plot;
-            episodes.push(
-              new Episode(
-                episode_id,
-                episode_number,
-                episode_name,
-                episode_plot
-              )
-            );
-          }
-          movie_seasons.push(new Season(season_number, episodes));
-        }
+      if (count++ >= max_results) {
+        break;
       }
-
-      const video_player_page = await debug_get(`${sc_url}/watch/${id}`);
-      const match_video_player = regex(
-        '<video-player.+response="(.+)".+video-player>',
-        "s"
-      );
-      const video_player_infos = JSON.parse(
-        decode_utf8(decode_html(video_player_page.match(match_video_player)[1]))
-      );
-      /* const tmdb_id = video_player_infos.title.tmdb_id;
-      const tmdb_type = video_player_infos.title.type; */
-      const friendly_name = video_player_infos.title.name;
-      const plot = video_player_infos.title.plot;
-      const scws_id = video_player_infos.scws_id;
-
-      movies_found.push(
-        new Movie(
-          movie_seasons,
-          movie_seasons.length > 0,
-          slug,
-          id,
-          images,
-          plot,
-          friendly_name,
-          scws_id,
-          trailer_url
-        )
-      );
+      const movie = await retrieve_movie_info(record);
+      movies_found.push(movie);
     }
 
     return movies_found;
@@ -554,15 +579,17 @@ async function main() {
       }
       video_player_page_url += `?e=${movie.seasons[season_index].episodes[episode_index].id}`;
     }
-    const video_player_page = await debug_get(video_player_page_url);
-    const match_video_player = regex(
-      '<video-player.+response="(.+)".+video-player>',
+    const video_player_page_raw = decode_utf8(
+      decode_html(await debug_get(video_player_page_url))
+    );
+    const match_video_player_info = regex(
+      '<div id="app" data-page="(.+)"><!--',
       "s"
     );
-    const video_player_infos = JSON.parse(
-      decode_utf8(decode_html(video_player_page.match(match_video_player)[1]))
-    );
-    const scws_id = video_player_infos.scws_id;
+    const video_player_info = JSON.parse(
+      video_player_page_raw.match(match_video_player_info)[1]
+    ).props;
+    const scws_id = video_player_info.episode.scws_id;
     return scws_id;
   }
 
@@ -667,6 +694,14 @@ class Movie {
    * @type {string}
    */
   trailer_url;
+  /**
+   * @type {string}
+   */
+  score;
+  /**
+   * @type {string}
+   */
+  release_date;
 
   constructor(
     seasons,
@@ -677,7 +712,9 @@ class Movie {
     plot,
     friendly_name,
     scws_id,
-    trailer_url
+    trailer_url,
+    score,
+    release_date
   ) {
     this.seasons = seasons;
     this.is_series = is_series;
@@ -688,6 +725,8 @@ class Movie {
     this.friendly_name = friendly_name;
     this.scws_id = scws_id;
     this.trailer_url = trailer_url;
+    this.score = score;
+    this.release_date = release_date;
   }
 }
 
@@ -801,11 +840,10 @@ class Option {
 
   /**
    *
-   * @param {string} name
    * @param {string} alias
    * @param {boolean} has_value
    * @param {boolean} is_optional
-   * @param {string} value
+   * @param {string} description
    */
   constructor(alias, has_value, is_optional, description) {
     this.alias = alias;
