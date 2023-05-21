@@ -1,5 +1,5 @@
-import crypto from "crypto";
-import fs from "fs";
+const crypto = require("crypto");
+const fs = require("fs");
 
 async function main() {
   let options_table = new Options_Table("--", {
