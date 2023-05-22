@@ -11,7 +11,8 @@ async function main() {
       undefined,
       true,
       true,
-      "max number of movies in search results"
+      "max number of movies in search results",
+      3
     ),
     output: new Option("o", true, false, "movie output file"),
     "debug-mode": new Option("debug", false, true, "activate debug mode"),
@@ -42,10 +43,7 @@ async function main() {
     error("invalid url");
   }
 
-  const max_search_results_option = options_table.options["max-search-results"];
-  const max_search_results = max_search_results_option.found
-    ? max_search_results_option.value
-    : 3;
+  const max_search_results = options_table.options["max-search-results"].value;
   const movies = await search_movie(movie, max_search_results);
   if (movies.length == 0) {
     console.log("0 movies found");
@@ -256,65 +254,69 @@ async function main() {
       movie_db_info_url += movie.scws_id;
     }
 
-    const movie_db_infos_raw = await debug_get(movie_db_info_url); // ERROR HERE
-    const movie_db_info = JSON.parse(movie_db_infos_raw);
-    const folder_id = movie_db_info.folder_id;
-    const quality = `${movie_db_info.quality}p`;
-    const storage_number = movie_db_info.storage.number;
-    let proxy_index = movie_db_info.proxy_index;
-    const cdn = movie_db_info.cdn;
-    const cdn_type_number = `${cdn.type}${cdn.number}`;
-    const proxies = cdn.proxies;
-    const max_number = proxies[proxies.length - 1].number;
-
-    const token = await generate_token();
-    let require_decryption = true;
-    let playlist = await debug_get(
-      `https://scws.work/master/${
-        scws_id ? scws_id : movie.scws_id
-      }?type=video&rendition=${quality}&${token}`
-    );
-    if (!playlist) {
-      playlist = await debug_get(
-        `https://scws.work/master/${
-          scws_id ? scws_id : movie.scws_id
-        }?type=video&rendition=${quality}.m3u8&${token}`
-      );
-      require_decryption = false;
+    let video_player_page_url = `${sc_url}/watch/${movie.id}`;
+    if (movie.is_series) {
+      video_player_page_url += `?e=${movie.seasons[season_index].episodes[episode_index].id}`;
     }
-    let playlist_lines = playlist.split("\n");
-    const match_ts_file = regex("[0-9].+[.]ts");
-    const match_credentials_line = regex('#EXT-X-KEY.+URI="(.+)",IV.+');
-    for (const line_key in playlist_lines) {
-      if (match_ts_file.test(playlist_lines[line_key])) {
-        ++proxy_index;
-        if (proxy_index > max_number) {
-          proxy_index = 1;
-        }
-        const proxy_index_template = `${proxy_index}`.padStart(2, "0");
-        let ts_file_url;
-        if (require_decryption) {
-          ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/video/${quality}/${playlist_lines[line_key]}`;
-        } else {
-          ts_file_url = `https://sc-${cdn_type_number}-${proxy_index_template}.scws-content.net/hls/${storage_number}/${folder_id}/${playlist_lines[line_key]}`;
-        }
-        playlist_lines[line_key] = ts_file_url;
-      }
+    const video_player_page_raw = await debug_get(video_player_page_url);
+    const match_data_page = regex('<div id="app" data-page="(.+)"><!--', "s");
+    const data_page = JSON.parse(
+      decode_utf8(decode_html(video_player_page_raw.match(match_data_page)[1]))
+    );
+    const video_player_iframe_url = data_page.props.embedUrl;
+    const video_player_iframe_page_raw = await debug_get(
+      video_player_iframe_url
+    );
+    const match_video_player_embed_url = regex('src="(.+)".+frameborder', "s");
+    const video_player_embed_url = decode_html(
+      video_player_iframe_page_raw.match(match_video_player_embed_url)[1]
+    );
+    const video_player_embed_page_raw = await debug_get(video_player_embed_url);
 
-      const credentials_line = playlist_lines[line_key].match(
-        match_credentials_line
-      );
-      if (credentials_line) {
+    const match_master_playlist_info = regex(
+      "window[.]masterPlaylistParams = (.+)const masterPlaylistUrl = new URL[(]'(.+)'[)].+for [(]",
+      "s"
+    );
+    const master_playlist_info = video_player_embed_page_raw.match(
+      match_master_playlist_info
+    );
+    const master_playlist_params = JSON.parse(
+      validate_json(master_playlist_info[1])
+    );
+    const master_playlist_url = `${master_playlist_info[2]}?token=${master_playlist_params.token}&token720p=${master_playlist_params.token720p}&expires=${master_playlist_params.expires}&canCast=${master_playlist_params.canCast}&n=1`;
+    const master_playlist = await debug_get(master_playlist_url);
+    const playlist_url = master_playlist
+      .split("\n")
+      .filter((line) => line.includes("rendition=720p"))[0];
+    const playlist = await debug_get(playlist_url);
+    let playlist_lines = playlist.split("\n");
+    const match_credentials_line = regex('#EXT-X-KEY.+URI="(.+)",IV.+');
+    playlist_lines = playlist_lines.map((line) => {
+      if (match_credentials_line.test(line)) {
         const match_key_uri = regex('URI=".+"');
         const key = retrieve_key_url();
-        playlist_lines[line_key] = playlist_lines[line_key].replace(
-          match_key_uri,
-          `URI="${key}"`
-        );
+        return line.replace(match_key_uri, `URI="${key}"`);
       }
-    }
-
+      return line;
+    });
     return playlist_lines.join("\n");
+  }
+
+  /**
+   *
+   * @param {string} s
+   * @returns {string}
+   */
+  function validate_json(s) {
+    return s
+      .split("")
+      .map((c) => {
+        if (c == "'") {
+          return '"';
+        }
+        return c;
+      })
+      .join("");
   }
 
   /**
@@ -350,7 +352,7 @@ async function main() {
     return new Uint8Array(bytes);
   }
 
-  async function generate_token() {
+  /* async function generate_token() {
     const l = 48;
     const o = await debug_get("https://api64.ipify.org/");
     const i = "Yc8U6r8KjAKAepEA";
@@ -367,7 +369,7 @@ async function main() {
 
     const token = `token=${base64Url}&expires=${c}`;
     return token;
-  }
+  } */
 
   function error(message) {
     console.log("Error: ");
@@ -625,6 +627,7 @@ async function main() {
     const table = {
       "&quot;": '"',
       "&#039;": "'",
+      "&amp;": "&",
     };
 
     const decoded = decode_with_table(html_encoded, table);
@@ -844,12 +847,14 @@ class Option {
    * @param {boolean} has_value
    * @param {boolean} is_optional
    * @param {string} description
+   * @param {string} default_value
    */
-  constructor(alias, has_value, is_optional, description) {
+  constructor(alias, has_value, is_optional, description, default_value) {
     this.alias = alias;
     this.has_value = has_value;
     this.is_optional = is_optional;
     this.description = description;
+    this.value = default_value;
   }
 }
 
