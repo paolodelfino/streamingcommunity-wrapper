@@ -298,6 +298,7 @@ async function main() {
     }
     const playlist = await debug_get(playlist_url);
     let playlist_lines = playlist.split("\n");
+    array_insert(playlist_lines, 2, "#EXT-X-ALLOW-CACHE:YES");
     const match_credentials_line = regex('#EXT-X-KEY.+URI="(.+)",IV.+');
     playlist_lines = playlist_lines.map((line) => {
       if (match_credentials_line.test(line)) {
@@ -308,6 +309,16 @@ async function main() {
       return line;
     });
     return playlist_lines.join("\n");
+  }
+
+  /**
+   *
+   * @param {any[]} array
+   * @param {number} index
+   * @param {any} element
+   */
+  function array_insert(array, index, element) {
+    array.splice(index, 0, element);
   }
 
   /**
