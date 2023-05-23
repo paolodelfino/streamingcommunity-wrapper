@@ -283,11 +283,19 @@ async function main() {
     const master_playlist_params = JSON.parse(
       validate_json(master_playlist_info[1])
     );
-    const master_playlist_url = `${master_playlist_info[2]}?token=${master_playlist_params.token}&token720p=${master_playlist_params.token720p}&expires=${master_playlist_params.expires}&canCast=${master_playlist_params.canCast}&n=1`;
-    const master_playlist = await debug_get(master_playlist_url);
-    const playlist_url = master_playlist
-      .split("\n")
-      .filter((line) => line.includes("rendition=720p"))[0];
+    const master_playlist_url = `${master_playlist_info[2]}?token=${master_playlist_params.token}&token720p=${master_playlist_params.token720p}&token360p=${master_playlist_params.token360p}&token480p=${master_playlist_params.token480p}&token1080p=${master_playlist_params.token1080p}&expires=${master_playlist_params.expires}&canCast=${master_playlist_params.canCast}&n=1`;
+    const master_playlist = (await debug_get(master_playlist_url)).split("\n");
+    let playlist_url;
+    const match_valid_playlist_url = regex(
+      "^https:.+rendition=.+token=.+&expires.+"
+    );
+    for (let i = 0; i < master_playlist.length; i++) {
+      const line = master_playlist[i];
+      if (match_valid_playlist_url.test(line)) {
+        playlist_url = line;
+        break;
+      }
+    }
     const playlist = await debug_get(playlist_url);
     let playlist_lines = playlist.split("\n");
     const match_credentials_line = regex('#EXT-X-KEY.+URI="(.+)",IV.+');
